@@ -52,8 +52,12 @@ struct bmi2_dev bmi;
 uint8_t sensor_list[2] = { BMI2_ACCEL, BMI2_GYRO };
 struct bmi2_sens_config sens_config[2];
 struct bmi2_sens_data sensor_data = { { 0 } };
+bool bmi_ready = false;
 float acc_x, acc_y, acc_z;
 float gyr_x, gyr_y, gyr_z;
+bool bmp_ready = false;
+BP_BMP180_Calibration_Data bmp180_calib_data;
+BP_BMP180_Dev bmp180_dev;
 
 /* USER CODE END PV */
 
@@ -61,20 +65,23 @@ float gyr_x, gyr_y, gyr_z;
 void SystemClock_Config(void);
 
 /* USER CODE BEGIN PFP */
+#if SEMIHOSTING_ENABLED
 extern void initialise_monitor_handles(void);
+#endif
 void BP_Delay_us(uint32_t period_us, void *intf_ptr);
 void BP_Enable_DWT_Cycle_Counter(void);
-int8_t BP_BMI270_Init(void);
+void BP_BMI270_Init(void);
 int8_t BP_BMI270_Accel_Gyro_Config(struct bmi2_dev *bmi);
-void BP_BMI270_Get_Sensor_Data();
+void BP_BMI270_Get_Sensor_Data(void);
 float BP_LSB_To_MPS(int16_t val, float g_range, uint8_t bit_width);
 float BP_LSB_To_DPS(int16_t val, float dps, uint8_t bit_width);
+void BP_BMP180_Init(void);
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-int8_t BP_BMI270_Init(void) 
+void BP_BMI270_Init(void) 
 {
   int8_t result;
   bmi.intf_ptr = &hi2c1;
@@ -90,11 +97,10 @@ int8_t BP_BMI270_Init(void)
   if (result == BMI2_OK) 
   {
     printf("BMI270 INIT \n");
+    BP_BMI270_Accel_Gyro_Config(&bmi);
   } else {
     printf("BMI270 FAILED INIT %d \n", result);
   }
-
-  return result;
 }
 
 int8_t BP_BMI270_Accel_Gyro_Config(struct bmi2_dev *bmi) 
@@ -125,21 +131,22 @@ int8_t BP_BMI270_Accel_Gyro_Config(struct bmi2_dev *bmi)
       result = bmi270_sensor_enable(sensor_list, 2, bmi);
       if (result == BMI2_OK)
       {
-        printf("SENSOR SET AND ENABLE SUCCESS \n");
+        bmi_ready = true;
+        printf("BMI270 SET AND ENABLE SUCCESS \n");
       } else {
-        printf("SENSOR SET AND ENABLE FAILED \n");
+        printf("BMI270 SET AND ENABLE FAILED \n");
       }
     } else {
-      printf("SET SENSOR CONFIG FAILED \n");
+      printf("BMI270 SET SENSOR CONFIG FAILED \n");
     }
   } else {
-    printf("GET SENSOR CONFIG FAILED \n");
+    printf("BMI270 GET SENSOR CONFIG FAILED \n");
   }
 
   return result;
 }
 
-void BP_BMI270_Get_Sensor_Data() 
+void BP_BMI270_Get_Sensor_Data(void) 
 {
   int8_t result;
   result = bmi2_get_sensor_data(&sensor_data, &bmi);
@@ -156,6 +163,24 @@ void BP_BMI270_Get_Sensor_Data()
     printf("GET SENSOR DATA FAILED \n");
   }
 }
+
+void BP_BMP180_Init(void)
+{
+  HAL_StatusTypeDef result;
+  result = BP_Check_BMP180_Ready();
+  if (result == HAL_OK)
+  {
+    printf("BMP180 INIT \n");
+    result = BP_BMP180_Read_Calibration_Data(&bmp180_calib_data);
+    if (result == HAL_OK)
+    {
+      BP_BMP180_Calibrate_Ground_Level(&bmp180_calib_data, &bmp180_dev);
+      bmp_ready = true;
+    }
+  } else {
+    printf("BMP180 FAILED INIT \n");
+  }
+}
 /* USER CODE END 0 */
 
 /**
@@ -166,7 +191,9 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
+  #if SEMIHOSTING_ENABLED
   initialise_monitor_handles();
+  #endif
 
   /* USER CODE END 1 */
 
@@ -192,11 +219,8 @@ int main(void)
   MX_I2C1_Init();
 
   /* USER CODE BEGIN 2 */
-  int8_t bmi270_result = BP_BMI270_Init();
-  if (bmi270_result == BMI2_OK) 
-  {
-    BP_BMI270_Accel_Gyro_Config(&bmi);
-  }
+  BP_BMI270_Init();
+  BP_BMP180_Init();
 
   /* USER CODE END 2 */
 
@@ -205,8 +229,21 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-    BP_BMI270_Get_Sensor_Data();
-    printf("ACCEL X: %.3f, ACCEL Y: %.3f, ACCEL Z: %.3f | GYRO X: %.3f, GYRO Y: %.3f, GYRO X: %.3f \n", acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z);
+    if (bmi_ready) 
+    {
+      BP_BMI270_Get_Sensor_Data();
+      printf("ACCEL X: %.3f, ACCEL Y: %.3f, ACCEL Z: %.3f | GYRO X: %.3f, GYRO Y: %.3f, GYRO X: %.3f \n", acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z);
+    }
+    if (bmp_ready) 
+    {
+      BP_BMP180_Get_Data(&bmp180_calib_data, &bmp180_dev);
+      printf("TEMP: %.1f, ALTITUDE: %.3f, TAKEOFF ALTITUDE: %.3f, RELATIVE ALTITUDE: %.3f \n", 
+        bmp180_dev.temp, 
+        bmp180_dev.altitude, 
+        bmp180_dev.takeoff_altitude, 
+        bmp180_dev.relative_altitude
+      );
+    }
     HAL_Delay(50);
     /* USER CODE BEGIN 3 */
   }
